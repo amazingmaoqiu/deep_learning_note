@@ -1,0 +1,2 @@
+LAYER = [40, 240, 138]
+LEARNING_RATE = 1e-1
