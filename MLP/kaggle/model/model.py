@@ -10,17 +10,19 @@ class MLP(object):
 	def __init__(self):
 		self.layer = cfg.LAYER 
 		self.learning_rate = cfg.LEARNING_RATE 
-		self.input = tf.placeholder(shape = [None, 40], dtype = tf.float32, name = 'inputs')
+		self.keep_prob = cfg.KEEP_PROB
+		self.padding = cfg.PADDING
+		self.input = tf.placeholder(shape = [None, (2*self.padding+1)*40], dtype = tf.float32, name = 'inputs')
 		self.label = tf.placeholder(shape = [None, 138], dtype = tf.float32, name = 'labels')
 
-	def perceptron_layer(self, idx_layer, input, activation = 'sigmoid'):
+	def perceptron_layer(self, idx_layer, input, activation = 'relu'):
 		with tf.variable_scope("pl" + str(idx_layer)) as scope:
 			# weights = tf.get_variable(shape = [input.shape[1],self.layer[idx_layer-1]], dtype = tf.float32, name = 'weights')
 			weights = tf.get_variable(shape = [input.shape[1],self.layer[idx_layer-1]], dtype = tf.float32, initializer = tf.truncated_normal_initializer(), name = 'weights')
 			bias    = tf.get_variable(shape = [self.layer[idx_layer - 1]],dtype = tf.float32,  name = 'bias')
 		if(activation == 'softmax'):
 			return tf.add(tf.matmul(input, weights), bias)
-		return tf.sigmoid(tf.add(tf.matmul(input, weights), bias))
+		return tf.nn.dropout(tf.nn.relu(tf.add(tf.matmul(input, weights), bias)), keep_prob = self.keep_prob)
 
 
 	def build_model(self):
@@ -38,6 +40,20 @@ class MLP(object):
 		self.writer.close()
 		print("model completed.")
 
+	def preprocess(self, data, label_one_hot):
+		new_data = []
+		processed_label = []
+		for i in range(data.shape[0]):
+			new_label = label_one_hot[i][self.padding:-self.padding,:]
+			new_sample = np.zeros([data[i].shape[0]-2*self.padding, data[i].shape[1]*(2*self.padding+1)])
+			# sample = np.lib.pad(sample, (4,4), 'mean')
+			for j in range(new_sample.shape[0]):
+				new_sample[j,:] = np.reshape(data[i][j:j+(2*self.padding+1), :],(1,-1))
+			new_data.append(new_sample)
+			processed_label.append(new_label)
+		return new_data, processed_label
+
+
 	def load_data(self, mode):
 		if(mode == 'train'):
 			data = np.load('../data/dev.npy', encoding = 'latin1')
@@ -53,13 +69,16 @@ class MLP(object):
 			for i in range(i_label.shape[0]):
 				one_label[i, i_label[i]] = 1
 			label_one_hot.append(one_label)
-		return data, label_one_hot
+
+		processed_data, processed_label = self.preprocess(data, label_one_hot)
+
+		return processed_data, processed_label
 		
 
 	def train(self):
 		data, label = self.load_data('train')
 		self.sess.run(self.init)
-		for epoch in range(5):
+		for epoch in range(10):
 			avg_loss = 0
 			for idx_batch in range(len(data)):
 				data_batch = data[idx_batch]
@@ -87,7 +106,7 @@ class MLP(object):
 	def retrain(self):
 		data, label = self.load_data('train')
 		self.saver.restore(self.sess, '../weights/mlp.ckpt')
-		for epoch in range(1000):
+		for epoch in range(20):
 			avg_loss = 0
 			for idx_batch in range(len(data)):
 				data_batch = data[idx_batch]
