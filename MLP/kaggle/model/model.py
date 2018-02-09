@@ -5,6 +5,8 @@ import pickle
 import math
 import config as cfg 
 import argparse
+import random
+import tensorflow.contrib.slim as slim
 
 class MLP(object):
 	def __init__(self):
@@ -12,6 +14,8 @@ class MLP(object):
 		self.learning_rate = cfg.LEARNING_RATE 
 		self.keep_prob = cfg.KEEP_PROB
 		self.padding = cfg.PADDING
+		self.batch_size = cfg.BATCH_SIZE
+		self.epoch = cfg.EPOCH
 		self.input = tf.placeholder(shape = [None, (2*self.padding+1)*40], dtype = tf.float32, name = 'inputs')
 		self.label = tf.placeholder(shape = [None, 138], dtype = tf.float32, name = 'labels')
 
@@ -22,100 +26,239 @@ class MLP(object):
 			bias    = tf.get_variable(shape = [self.layer[idx_layer - 1]],dtype = tf.float32,  name = 'bias')
 		if(activation == 'softmax'):
 			return tf.add(tf.matmul(input, weights), bias)
-		return tf.nn.dropout(tf.nn.relu(tf.add(tf.matmul(input, weights), bias)), keep_prob = self.keep_prob)
+		# return tf.nn.dropout(tf.nn.relu(tf.add(tf.matmul(input, weights), bias)), keep_prob = self.keep_prob)
+		return tf.layers.batch_normalization(tf.sigmoid(tf.add(tf.matmul(input, weights), bias)))
 
+
+	# def build_model(self):
+	# 	self.net = self.input
+	# 	for i in range(1,len(self.layer)):
+	# 		self.net = self.perceptron_layer(i, self.net)
+	# 	self.net = self.perceptron_layer(len(self.layer), self.net, activation = 'softmax')
+	# 	self.sess = tf.Session()
+	# 	self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = self.net, labels = tf.cast(self.label, dtype = tf.float32)))
+	# 	# self.optimizer = tf.train.GradientDescentOptimizer(learning_rate = self.learning_rate).minimize(self.loss)
+	# 	self.optimizer = tf.train.AdamOptimizer(learning_rate = self.learning_rate).minimize(self.loss)
+	# 	self.init = tf.global_variables_initializer()
+	# 	self.saver = tf.train.Saver()
+	# 	self.writer = tf.summary.FileWriter('../my_graph', self.sess.graph)
+	# 	self.writer.close()
+	# 	print("model completed.")
 
 	def build_model(self):
 		self.net = self.input
-		for i in range(1,len(self.layer)):
-			self.net = self.perceptron_layer(i, self.net)
-		self.net = self.perceptron_layer(len(self.layer), self.net, activation = 'softmax')
+		for i in range(1, len(self.layer)):
+			self.net = slim.fully_connected(self.net, self.layer[i-1])
+		self.net = slim.fully_connected(self.net, self.layer[-1], activation_fn = None)
 		self.sess = tf.Session()
 		self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits = self.net, labels = tf.cast(self.label, dtype = tf.float32)))
 		# self.optimizer = tf.train.GradientDescentOptimizer(learning_rate = self.learning_rate).minimize(self.loss)
-		self.optimizer = tf.train.AdagradOptimizer(learning_rate = self.learning_rate).minimize(self.loss)
+		self.optimizer = tf.train.AdamOptimizer(learning_rate = self.learning_rate).minimize(self.loss)
 		self.init = tf.global_variables_initializer()
 		self.saver = tf.train.Saver()
 		self.writer = tf.summary.FileWriter('../my_graph', self.sess.graph)
 		self.writer.close()
 		print("model completed.")
 
-	def preprocess(self, data, label_one_hot):
-		new_data = []
-		processed_label = []
-		for i in range(data.shape[0]):
-			new_label = label_one_hot[i][self.padding:-self.padding,:]
-			new_sample = np.zeros([data[i].shape[0]-2*self.padding, data[i].shape[1]*(2*self.padding+1)])
-			# sample = np.lib.pad(sample, (4,4), 'mean')
-			for j in range(new_sample.shape[0]):
-				new_sample[j,:] = np.reshape(data[i][j:j+(2*self.padding+1), :],(1,-1))
-			new_data.append(new_sample)
-			processed_label.append(new_label)
-		return new_data, processed_label
+	# def preprocess(self, data, label_one_hot):
+	# 	new_data = []
+	# 	processed_label = []
+	# 	for i in range(data.shape[0]):
+	# 		new_label = label_one_hot[i][self.padding:-self.padding,:]
+	# 		# new_sample = np.zeros([data[i].shape[0]-2*self.padding, data[i].shape[1]*(2*self.padding+1)])
+	# 		new_sample = np.lib.pad(data[i], (self.padding,self.padding), mode = 'constant', constant_values = 0)
+	# 		for j in range(new_sample.shape[0]):
+	# 			new_sample[j,:] = np.reshape(data[i][j:j+(2*self.padding+1), :],(1,-1))
+	# 		new_data.append(new_sample)
+	# 		processed_label.append(new_label)
+	# 	return new_data, processed_label
 
+	def preprocess(self, data, label):
+		# new_data = []
+		# new_label = []
+		for i in range(data.shape[0]):
+			new_sample = np.pad(data[i], [(self.padding, self.padding),(0,0)], mode = 'constant', constant_values = 0)
+			# print(new_sample.shape)
+			if(i == 0):
+				new_data = new_sample
+				new_label = label[i]
+			else:
+				# new_data = np.append(new_data, new_sample, axis = 0)
+				# new_label = np.append(new_label, label[i], axis = 0)
+				new_data = np.concatenate((new_data, new_sample), axis = 0)
+				new_label = np.concatenate((new_label, label[i]), axis = 0)
+
+		num = 0
+		for i in range(data.shape[0]):
+			num += label[i].shape[0]
+		table = np.arange(num)
+		index = 0
+		extra = self.padding
+		for i in range(data.shape[0]):
+			for j in range(label[i].shape[0]):
+				table[index] += extra
+				index += 1
+			extra += 2*self.padding
+
+		return new_data, new_label, table
+
+
+
+	# def load_data(self, mode):
+	# 	if(mode == 'train'):
+	# 		data = np.load('../data/dev.npy', encoding = 'latin1')
+	# 		label = np.load('../data/dev_labels.npy', encoding = 'latin1')
+	# 	elif(mode == 'test'):
+	# 		data = np.load('../data/dev.npy', encoding = 'latin1')
+	# 		label = np.load('../data/dev_labels.npy', encoding = 'latin1')
+	# 	else:
+	# 		raise Exception('Wrong mode.')
+	# 	label_one_hot = []
+	# 	for i_label in label:
+	# 		one_label = np.zeros([i_label.shape[0],138])
+	# 		for i in range(i_label.shape[0]):
+	# 			one_label[i, i_label[i]] = 1
+	# 		label_one_hot.append(one_label)
+	# 	processed_data, processed_label, idx_table = self.preprocess(data, label_one_hot)
+
+	# 	return processed_data, processed_label, idx_table
+		# return data, label_one_hot
 
 	def load_data(self, mode):
 		if(mode == 'train'):
-			data = np.load('../data/dev.npy', encoding = 'latin1')
-			label = np.load('../data/dev_labels.npy', encoding = 'latin1')
+			data = np.load('../data/validation.npy')
+			label = np.load('../data/validation_labels.npy')
+			idx_table = np.load('../data/validation_table.npy')
 		elif(mode == 'test'):
-			data = np.load('../data/dev.npy', encoding = 'latin1')
-			label = np.load('../data/dev_labels.npy', encoding = 'latin1')
+			data = np.load('../data/validation.npy')
+			label = np.load('../data/validation_labels.npy')
+			idx_table = np.load('../data/validation_table.npy')
 		else:
 			raise Exception('Wrong mode.')
-		label_one_hot = []
-		for i_label in label:
-			one_label = np.zeros([i_label.shape[0],138])
-			for i in range(i_label.shape[0]):
-				one_label[i, i_label[i]] = 1
-			label_one_hot.append(one_label)
-
-		processed_data, processed_label = self.preprocess(data, label_one_hot)
-
-		return processed_data, processed_label
+		return data, label, idx_table
 		
 
-	def train(self):
-		data, label = self.load_data('train')
-		self.sess.run(self.init)
-		for epoch in range(10):
-			avg_loss = 0
-			for idx_batch in range(len(data)):
-				data_batch = data[idx_batch]
-				label_batch = label[idx_batch]
-				_, cost = self.sess.run((self.optimizer, self.loss), feed_dict = {self.input:data_batch, self.label:label_batch})
-				avg_loss += cost
-			print("epoch %04d : loss = %.9f"%(epoch, avg_loss))
-		self.saver.save(self.sess, '../weights/mlp.ckpt')
-		print('training completed.')
+	# def train(self):
+		# data, label = self.load_data('train')
+		# self.sess.run(self.init)
+		# for epoch in range(10):
+		# 	avg_loss = 0
+		# 	for idx_batch in range(len(data)):
+		# 		data_batch = data[idx_batch]
+		# 		label_batch = label[idx_batch]
+		# 		_, cost = self.sess.run((self.optimizer, self.loss), feed_dict = {self.input:data_batch, self.label:label_batch})
+		# 		avg_loss += cost
+		# 	print("epoch %04d : loss = %.9f"%(epoch, avg_loss))
+		# self.saver.save(self.sess, '../weights/mlp.ckpt')
+		# print('training completed.')
 
+	def train(self):
+		data, label, idx_table = self.load_data('train')
+		print("load completed.")
+		self.sess.run(self.init)
+		for epoch in range(self.epoch):
+			avg_loss = 0
+			shuffle = np.array(random.sample(range(idx_table.shape[0]), idx_table.shape[0]))
+			correct_prediction = tf.equal(tf.argmax(self.net, axis = 1), tf.argmax(self.label, axis = 1))
+			correct_batch = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
+			total_correct = 0
+			start = 0
+			while(start < shuffle.shape[0]):
+				if(start + self.batch_size < shuffle.shape[0]):
+					# batch_data = np.zeros(self.batch_size, 40*(2*self.padding+1))
+					# batch_label = np.zeros(self.batch_size, 138)
+					batch_idx = shuffle[start:start+self.batch_size]
+					# print(batch_label.shape)
+				else:
+					batch_idx = shuffle[start:]
+					# batch_data = np.zeros(batch_idx.shape[0], 40*(2*self.padding+1))
+					# batch_label = np.zeros(batch_idx.shape[0], 138)
+					# print(batch_label.shape)
+				# batch_data = data[idx_table[batch_idx]]
+				batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+				for idx in range(batch_idx.shape[0]):
+					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
+				batch_label = label[batch_idx]
+				_, cost, correct = self.sess.run((self.optimizer, self.loss, correct_batch), feed_dict = {self.input:batch_data, self.label:batch_label})
+				avg_loss += cost
+				total_correct += correct
+				start += self.batch_size
+			print("epoch %04d : loss = %.9f, accuracy = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0]))
+		self.saver.save(self.sess, '../weights/mlp.ckpt')
+	
+	
+	
+				
 	def test(self):
-		data, label = self.load_data('test')
+		data, label, idx_table = self.load_data('test')
+		print("loading completed.")
 		self.saver.restore(self.sess, '../weights/mlp.ckpt')
 		correct_prediction = tf.equal(tf.argmax(self.net, axis = 1), tf.argmax(self.label, axis = 1))
-		accuracy = tf.reduce_mean(tf.cast(correct_prediction, dtype = tf.float32))
-		avg_acc = 0
-		for idx_batch in range(len(data)):
-			data_batch = data[idx_batch]
-			label_batch = label[idx_batch]
-			acc = self.sess.run(accuracy, feed_dict = {self.input:data_batch, self.label:label_batch})
-			avg_acc += acc
-		avg_acc /= len(data)
-		print("Total average accuracy = " + str(avg_acc))
+		correct_batch = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
+		total_correct = 0
+		start = 0
+		while(start < idx_table.shape[0]):
+			if(start + self.batch_size < idx_table.shape[0]):
+				batch_idx = idx_table[start:start+self.batch_size]
+				batch_label = label[start:start+self.batch_size]
+			else:
+				batch_idx = idx_table[start:]
+				batch_label = label[start:]
+			batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+			for idx in range(batch_idx.shape[0]):
+				batch_data[idx,:] = data[batch_idx[idx]-self.padding:batch_idx[idx]+self.padding+1].reshape(1,-1)
+			# batch_label = label[start:start+self.batch_size]
+			total_correct += self.sess.run(correct_batch, feed_dict = {self.input:batch_data, self.label:batch_label})
+			start += self.batch_size
+		print("accuracy = " + str(total_correct / idx_table.shape[0]))
+
+
+	# def test(self):
+	# 	data, label = self.load_data('test')
+	# 	self.saver.restore(self.sess, '../weights/mlp.ckpt')
+	# 	correct_prediction = tf.equal(tf.argmax(self.net, axis = 1), tf.argmax(self.label, axis = 1))
+	# 	accuracy = tf.reduce_mean(tf.cast(correct_prediction, dtype = tf.float32))
+	# 	avg_acc = 0
+	# 	for idx_batch in range(len(data)):
+	# 		data_batch = data[idx_batch]
+	# 		label_batch = label[idx_batch]
+	# 		acc = self.sess.run(accuracy, feed_dict = {self.input:data_batch, self.label:label_batch})
+	# 		avg_acc += acc
+	# 	avg_acc /= len(data)
+	# 	print("Total average accuracy = " + str(avg_acc))
 
 	def retrain(self):
-		data, label = self.load_data('train')
+		data, label, idx_table = self.load_data('train')
 		self.saver.restore(self.sess, '../weights/mlp.ckpt')
-		for epoch in range(20):
+		for epoch in range(self.epoch):
 			avg_loss = 0
-			for idx_batch in range(len(data)):
-				data_batch = data[idx_batch]
-				label_batch = label[idx_batch]
-				_, cost = self.sess.run((self.optimizer, self.loss), feed_dict = {self.input:data_batch, self.label:label_batch})
+			shuffle = np.array(random.sample(range(idx_table.shape[0]), idx_table.shape[0]))
+			correct_prediction = tf.equal(tf.argmax(self.net, axis = 1), tf.argmax(self.label, axis = 1))
+			correct_batch = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
+			total_correct = 0
+			start = 0
+			while(start < shuffle.shape[0]):
+				if(start + self.batch_size < shuffle.shape[0]):
+					# batch_data = np.zeros(self.batch_size, 40*(2*self.padding+1))
+					# batch_label = np.zeros(self.batch_size, 138)
+					batch_idx = shuffle[start:start+self.batch_size]
+					# print(batch_label.shape)
+				else:
+					batch_idx = shuffle[start:]
+					# batch_data = np.zeros(batch_idx.shape[0], 40*(2*self.padding+1))
+					# batch_label = np.zeros(batch_idx.shape[0], 138)
+					# print(batch_label.shape)
+				# batch_data = data[idx_table[batch_idx]]
+				batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+				for idx in range(batch_idx.shape[0]):
+					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
+				batch_label = label[batch_idx]
+				_, cost, correct = self.sess.run((self.optimizer, self.loss, correct_batch), feed_dict = {self.input:batch_data, self.label:batch_label})
 				avg_loss += cost
-			print("epoch %04d : loss = %.9f"%(epoch, avg_loss))
+				total_correct += correct
+				start += self.batch_size
+			print("epoch %04d : loss = %.9f, accuracy = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0]))
 		self.saver.save(self.sess, '../weights/mlp.ckpt')
-		print('training completed.')
 
 
 def main():
