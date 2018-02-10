@@ -1,7 +1,7 @@
 import numpy as np 
 import tensorflow as tf 
-import sklearn
-import pickle
+# import sklearn
+# import pickle
 import math
 import config as cfg 
 import argparse
@@ -74,8 +74,6 @@ class MLP(object):
 	# 	return new_data, processed_label
 
 	def preprocess(self, data, label):
-		# new_data = []
-		# new_label = []
 		for i in range(data.shape[0]):
 			new_sample = np.pad(data[i], [(self.padding, self.padding),(0,0)], mode = 'constant', constant_values = 0)
 			# print(new_sample.shape)
@@ -87,6 +85,8 @@ class MLP(object):
 				# new_label = np.append(new_label, label[i], axis = 0)
 				new_data = np.concatenate((new_data, new_sample), axis = 0)
 				new_label = np.concatenate((new_label, label[i]), axis = 0)
+			if(i % 100 == 0):
+				print(str(i) + "has been concatenated.")
 
 		num = 0
 		for i in range(data.shape[0]):
@@ -101,6 +101,55 @@ class MLP(object):
 			extra += 2*self.padding
 
 		return new_data, new_label, table
+
+	def process(self, data, label):
+		# turn the label into one_hot
+		# label_one_hot = []
+		# for i_label in label:
+		# 	one_label = np.zeros([i_label.shape[0],138])
+		# 	for i in range(i_label.shape[0]):
+		# 		one_label[i, i_label[i]] = 1
+		# 	label_one_hot.append(one_label)
+		# label = np.array(label_one_hot)
+		len_ori = 0
+		for sent in data:
+			len_ori += sent.shape[0]
+		len_pad = len_ori + self.padding*2*data.shape[0]
+		new_data = np.zeros([len_pad, 40])
+		new_label = np.zeros([len_ori, ])
+		point_data = 0
+		point_label = 0
+		for i in range(data.shape[0]):
+			new_sample = np.pad(data[i], [(self.padding, self.padding),(0,0)], mode = 'constant', constant_values = 0)
+			new_data[point_data:point_data+new_sample.shape[0],:] = new_sample
+			new_label[point_label:point_label+label[i].shape[0]] = label[i]
+			point_data += new_sample.shape[0]
+			point_label += label[i].shape[0]
+			if(i % 1000 == 0):
+				print(str(i) + 'has been completed.')
+		table = np.arange(len_ori)
+		index = 0
+		extra = self.padding
+		for i in range(data.shape[0]):
+			for j in range(label[i].shape[0]):
+				table[index] += extra
+				index += 1
+			extra += 2*self.padding
+		return new_data, new_label, table
+
+	def one_hot(self, label):
+		label = label.astype(int)
+		# label_one_hot = []
+		# for i_label in label:
+		# 	one_label = np.zeros([i_label.shape[0],138])
+		# 	for i in range(i_label.shape[0]):
+		# 		one_label[i, i_label[i]] = 1
+		# 	label_one_hot.append(one_label)
+		# label = np.array(label_one_hot)
+		new_label = np.zeros([label.shape[0], 138])
+		for i in range(label.shape[0]):
+			new_label[i, label[i]] = 1
+		return new_label
 
 
 
@@ -126,13 +175,18 @@ class MLP(object):
 
 	def load_data(self, mode):
 		if(mode == 'train'):
-			data = np.load('../data/validation.npy')
-			label = np.load('../data/validation_labels.npy')
-			idx_table = np.load('../data/validation_table.npy')
+			data = np.load('../data/train.npy', encoding = 'latin1')
+			label = np.load('../data/train_labels.npy', encoding = 'latin1')
+			idx_table = np.load('../data/validation_table.npy', encoding = 'latin1')
+			# return data, label, idx_table
 		elif(mode == 'test'):
-			data = np.load('../data/validation.npy')
-			label = np.load('../data/validation_labels.npy')
-			idx_table = np.load('../data/validation_table.npy')
+			data = np.load('../data/validation.npy', encoding = 'latin1')
+			label = np.load('../data/validation_labels.npy', encoding = 'latin1')
+			idx_table = np.load('../data/validation_table.npy', encoding = 'latin1')
+		elif(mode == 'validation'):
+			data = np.load('../data/validation.npy', encoding = 'latin1')
+			label = np.load('../data/validation_labels.npy', encoding = 'latin1')
+			idx_table = np.load('../data/validation_idx.npy', encoding = 'latin1')
 		else:
 			raise Exception('Wrong mode.')
 		return data, label, idx_table
@@ -154,6 +208,7 @@ class MLP(object):
 
 	def train(self):
 		data, label, idx_table = self.load_data('train')
+		val_data, val_label, val_table = self.load_data('validation') 
 		print("load completed.")
 		self.sess.run(self.init)
 		for epoch in range(self.epoch):
@@ -179,11 +234,34 @@ class MLP(object):
 				for idx in range(batch_idx.shape[0]):
 					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
 				batch_label = label[batch_idx]
+				batch_label = self.one_hot(batch_label)
 				_, cost, correct = self.sess.run((self.optimizer, self.loss, correct_batch), feed_dict = {self.input:batch_data, self.label:batch_label})
 				avg_loss += cost
 				total_correct += correct
 				start += self.batch_size
-			print("epoch %04d : loss = %.9f, accuracy = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0]))
+			start = 0
+			pre_cor = 0
+			while(start < shuffle.shape[0]):
+				if(start + self.batch_size < shuffle.shape[0]):
+					# batch_data = np.zeros(self.batch_size, 40*(2*self.padding+1))
+					# batch_label = np.zeros(self.batch_size, 138)
+					batch_idx = shuffle[start:start+self.batch_size]
+					# print(batch_label.shape)
+				else:
+					batch_idx = shuffle[start:]
+					# batch_data = np.zeros(batch_idx.shape[0], 40*(2*self.padding+1))
+					# batch_label = np.zeros(batch_idx.shape[0], 138)
+					# print(batch_label.shape)
+				# batch_data = data[idx_table[batch_idx]]
+				batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+				for idx in range(batch_idx.shape[0]):
+					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
+				batch_label = label[batch_idx]
+				batch_label = self.one_hot(batch_label)
+				corr = self.sess.run(correct_batch, feed_dict = {self.input:batch_data, self.label:batch_label})
+				pre_cor += corr
+				start += self.batch_size
+			print("epoch %04d : loss = %.9f, accuracy = %.9f, val_acc = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0], pre_cor / val_label.shape[0]))
 		self.saver.save(self.sess, '../weights/mlp.ckpt')
 	
 	
