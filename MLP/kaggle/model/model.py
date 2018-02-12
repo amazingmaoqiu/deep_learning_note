@@ -1,7 +1,6 @@
 import numpy as np 
 import tensorflow as tf 
-# import sklearn
-# import pickle
+import pickle
 import math
 import config as cfg 
 import argparse
@@ -103,39 +102,32 @@ class MLP(object):
 		return new_data, new_label, table
 
 	def process(self, data, label):
-		# turn the label into one_hot
-		# label_one_hot = []
-		# for i_label in label:
-		# 	one_label = np.zeros([i_label.shape[0],138])
-		# 	for i in range(i_label.shape[0]):
-		# 		one_label[i, i_label[i]] = 1
-		# 	label_one_hot.append(one_label)
-		# label = np.array(label_one_hot)
 		len_ori = 0
 		for sent in data:
 			len_ori += sent.shape[0]
 		len_pad = len_ori + self.padding*2*data.shape[0]
 		new_data = np.zeros([len_pad, 40])
-		new_label = np.zeros([len_ori, ])
+		# new_label = np.zeros([len_ori, ])
 		point_data = 0
-		point_label = 0
+		# point_label = 0
 		for i in range(data.shape[0]):
 			new_sample = np.pad(data[i], [(self.padding, self.padding),(0,0)], mode = 'constant', constant_values = 0)
 			new_data[point_data:point_data+new_sample.shape[0],:] = new_sample
-			new_label[point_label:point_label+label[i].shape[0]] = label[i]
+			# new_label[point_label:point_label+label[i].shape[0]] = label[i]
 			point_data += new_sample.shape[0]
-			point_label += label[i].shape[0]
+			# point_label += label[i].shape[0]
 			if(i % 1000 == 0):
 				print(str(i) + 'has been completed.')
 		table = np.arange(len_ori)
 		index = 0
 		extra = self.padding
 		for i in range(data.shape[0]):
-			for j in range(label[i].shape[0]):
+			for j in range(data[i].shape[0]):
 				table[index] += extra
 				index += 1
 			extra += 2*self.padding
-		return new_data, new_label, table
+		# return new_data, new_label, table
+		return new_data, table
 
 	def one_hot(self, label):
 		label = label.astype(int)
@@ -175,9 +167,9 @@ class MLP(object):
 
 	def load_data(self, mode):
 		if(mode == 'train'):
-			data = np.load('../data/train.npy', encoding = 'latin1')
-			label = np.load('../data/train_labels.npy', encoding = 'latin1')
-			idx_table = np.load('../data/validation_table.npy', encoding = 'latin1')
+			data = np.load('../data/train_padding.npy', encoding = 'latin1')
+			label = np.load('../data/train_padding_labels.npy', encoding = 'latin1')
+			idx_table = np.load('../data/train_padding_idx.npy', encoding = 'latin1')
 			# return data, label, idx_table
 		elif(mode == 'test'):
 			data = np.load('../data/validation.npy', encoding = 'latin1')
@@ -241,32 +233,60 @@ class MLP(object):
 				start += self.batch_size
 			start = 0
 			pre_cor = 0
-			while(start < shuffle.shape[0]):
-				if(start + self.batch_size < shuffle.shape[0]):
+			val_shuffle = np.arange(val_label.shape[0])
+			print(val_shuffle.shape[0])
+			while(start < val_shuffle.shape[0]):
+				if(start + self.batch_size < val_shuffle.shape[0]):
 					# batch_data = np.zeros(self.batch_size, 40*(2*self.padding+1))
 					# batch_label = np.zeros(self.batch_size, 138)
-					batch_idx = shuffle[start:start+self.batch_size]
+					batch_idx = val_shuffle[start:start+self.batch_size]
 					# print(batch_label.shape)
 				else:
-					batch_idx = shuffle[start:]
+					batch_idx = val_shuffle[start:]
 					# batch_data = np.zeros(batch_idx.shape[0], 40*(2*self.padding+1))
 					# batch_label = np.zeros(batch_idx.shape[0], 138)
 					# print(batch_label.shape)
 				# batch_data = data[idx_table[batch_idx]]
 				batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
 				for idx in range(batch_idx.shape[0]):
-					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
-				batch_label = label[batch_idx]
+					batch_data[idx,:] = val_data[val_table[batch_idx[idx]]-self.padding:val_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
+				batch_label = val_label[batch_idx]
 				batch_label = self.one_hot(batch_label)
 				corr = self.sess.run(correct_batch, feed_dict = {self.input:batch_data, self.label:batch_label})
 				pre_cor += corr
 				start += self.batch_size
 			print("epoch %04d : loss = %.9f, accuracy = %.9f, val_acc = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0], pre_cor / val_label.shape[0]))
 		self.saver.save(self.sess, '../weights/mlp.ckpt')
-	
-	
-	
-				
+
+
+	def predict(self):
+		data = np.load("../data/test_padding.npy", encoding = 'latin1')
+		table = np.load("../data/test_padding_idx.npy", encoding = 'latin1')
+		print("loading completed.")
+		self.saver.restore(self.sess, '../weights/weights/mlp.ckpt')
+		prediction = tf.argmax(self.net, axis = 1)
+		ans = np.zeros([table.shape[0],])
+		print(ans.shape)
+		start = 0
+		point = 0
+		while(start < table.shape[0]):
+			if(start + self.batch_size < table.shape[0]):
+				batch_idx = table[start:start+self.batch_size]
+				ans_idx = np.arange(point, point+self.batch_size)
+			else:
+				batch_idx = table[start:]
+				ans_idx = np.arange(point, table.shape[0])
+			batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+			for idx in range(batch_idx.shape[0]):
+				batch_data[idx,:] = data[batch_idx[idx] - self.padding:batch_idx[idx]+self.padding+1].reshape(1,-1)
+			ans[ans_idx] = self.sess.run(prediction, feed_dict = {self.input:batch_data})
+			start += self.batch_size
+			point += self.batch_size
+		return ans
+
+
+
+
 	def test(self):
 		data, label, idx_table = self.load_data('test')
 		print("loading completed.")
@@ -291,22 +311,10 @@ class MLP(object):
 		print("accuracy = " + str(total_correct / idx_table.shape[0]))
 
 
-	# def test(self):
-	# 	data, label = self.load_data('test')
-	# 	self.saver.restore(self.sess, '../weights/mlp.ckpt')
-	# 	correct_prediction = tf.equal(tf.argmax(self.net, axis = 1), tf.argmax(self.label, axis = 1))
-	# 	accuracy = tf.reduce_mean(tf.cast(correct_prediction, dtype = tf.float32))
-	# 	avg_acc = 0
-	# 	for idx_batch in range(len(data)):
-	# 		data_batch = data[idx_batch]
-	# 		label_batch = label[idx_batch]
-	# 		acc = self.sess.run(accuracy, feed_dict = {self.input:data_batch, self.label:label_batch})
-	# 		avg_acc += acc
-	# 	avg_acc /= len(data)
-	# 	print("Total average accuracy = " + str(avg_acc))
 
 	def retrain(self):
 		data, label, idx_table = self.load_data('train')
+		val_data, val_label, val_table = self.load_data('validation') 
 		self.saver.restore(self.sess, '../weights/mlp.ckpt')
 		for epoch in range(self.epoch):
 			avg_loss = 0
@@ -331,13 +339,38 @@ class MLP(object):
 				for idx in range(batch_idx.shape[0]):
 					batch_data[idx,:] = data[idx_table[batch_idx[idx]]-self.padding:idx_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
 				batch_label = label[batch_idx]
+				batch_label = self.one_hot(batch_label)
 				_, cost, correct = self.sess.run((self.optimizer, self.loss, correct_batch), feed_dict = {self.input:batch_data, self.label:batch_label})
 				avg_loss += cost
 				total_correct += correct
 				start += self.batch_size
-			print("epoch %04d : loss = %.9f, accuracy = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0]))
+			start = 0
+			pre_cor = 0
+			val_shuffle = np.arange(val_label.shape[0])
+			print(val_shuffle.shape[0])
+			while(start < val_shuffle.shape[0]):
+				if(start + self.batch_size < val_shuffle.shape[0]):
+					# batch_data = np.zeros(self.batch_size, 40*(2*self.padding+1))
+					# batch_label = np.zeros(self.batch_size, 138)
+					batch_idx = val_shuffle[start:start+self.batch_size]
+					# print(batch_label.shape)
+				else:
+					batch_idx = val_shuffle[start:]
+					# batch_data = np.zeros(batch_idx.shape[0], 40*(2*self.padding+1))
+					# batch_label = np.zeros(batch_idx.shape[0], 138)
+					# print(batch_label.shape)
+				# batch_data = data[idx_table[batch_idx]]
+				batch_data = np.zeros([batch_idx.shape[0], 40*(2*self.padding+1)])
+				for idx in range(batch_idx.shape[0]):
+					batch_data[idx,:] = val_data[val_table[batch_idx[idx]]-self.padding:val_table[batch_idx[idx]]+self.padding+1].reshape(1,-1)
+				batch_label = val_label[batch_idx]
+				batch_label = self.one_hot(batch_label)
+				corr = self.sess.run(correct_batch, feed_dict = {self.input:batch_data, self.label:batch_label})
+				pre_cor += corr
+				start += self.batch_size
+			print("epoch %04d : loss = %.9f, accuracy = %.9f, val_acc = %.9f"%(epoch, avg_loss, total_correct / idx_table.shape[0], pre_cor / val_label.shape[0]))
 		self.saver.save(self.sess, '../weights/mlp.ckpt')
-
+	
 
 def main():
 	parser = argparse.ArgumentParser()
